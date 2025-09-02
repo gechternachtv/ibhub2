@@ -1,18 +1,17 @@
 //@ts-nocheck
 import { serve } from "bun";
 import fetch from "node-fetch";
-// import * as cheerio from "cheerio";
-import { parseHTML } from 'linkedom';
+import * as cheerio from "cheerio";
 import { writeFileSync, existsSync, readFileSync, mkdirSync } from "fs";
 import path from "path";
 
-
+// Folder to store RSS files
 const RSS_FOLDER = path.resolve("./rss_feeds");
 if (!existsSync(RSS_FOLDER)) mkdirSync(RSS_FOLDER);
 
 const CHANNELS = path.resolve("./channels.json");
 
-
+// Helpers
 function readJSON(file, defaultValue) {
   if (existsSync(file)) {
     try {
@@ -45,22 +44,20 @@ function readRSS(filePath, feedTitle) {
 }
 
 function parseRSSItems(rss) {
-  const { document } = parseHTML(rss);
+  const $ = cheerio.load(rss, { xmlMode: true });
   const items = [];
-
-  document.querySelectorAll("item").forEach((el) => {
+  $("item").each((_, el) => {
     items.push({
-      title: el.querySelector("title")?.textContent || "",
-      pubDate: el.querySelector("pubDate")?.textContent || "",
-      description: el.querySelector("description")?.textContent || "",
-      img: el.querySelector("enclosure")?.getAttribute("url") || "",
+      title: $(el).find("title").text(),
+      pubDate: $(el).find("pubDate").text(),
+      description: $(el).find("description").text(),
+      img: $(el).find("enclosure").attr("url"),
     });
   });
-
   return items;
 }
 
-
+// Convert relative img URL to full URL
 function absoluteUrl(urlToCheck, originalUrl) {
   // console.log(urlToCheck, originalUrl)
   try {
@@ -74,14 +71,14 @@ function absoluteUrl(urlToCheck, originalUrl) {
   }
 }
 
-
+// Generate RSS XML from items
 function generateRSS(items, pageUrl, title) {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
 <channel>
   <title>${title}</title>
   <link>${pageUrl}</link>
-  <description>ibhub: ${title}</description>
+  <description>RSS feed for ${title}</description>
   ${items
       .map((it) => {
         const imgTag = it.img ? `<img src="${absoluteUrl(it.img, pageUrl)}" />` : "";
@@ -91,7 +88,7 @@ function generateRSS(items, pageUrl, title) {
     <title><![CDATA[${it.title}]]></title>
     <link>${pageUrl}</link>
     <pubDate>${it.pubDate}</pubDate>
-    <description><![CDATA[${description} ${imgTag}]]></description>
+    <description><![CDATA[${imgTag} ${description}]]></description>
   </item>`;
       })
       .join("")}
@@ -102,9 +99,7 @@ function generateRSS(items, pageUrl, title) {
 
 async function fetchData(req, url) {
   const id = url.searchParams.get("id");
-  if (!id) {
-    return new Response("missing id param", { status: 400 })
-  }
+  if (!id) return new Response("Missing id param", { status: 400 });
 
   const channelsObj = readJSON(CHANNELS, {});
   if (channelsObj[id]) {
@@ -116,42 +111,36 @@ async function fetchData(req, url) {
     try {
       const res = await fetch(channelsObj[id].url);
       const html = await res.text();
-      // const $ = cheerio.load(html);
+      const $ = cheerio.load(html);
 
       const urlParam = channelsObj[id].url
       const containerSel = channelsObj[id].container || "body";
       const titleSel = channelsObj[id].title;
       const textSel = channelsObj[id].text;
       const imgSel = channelsObj[id].img;
-
-      const {
-        document
-      } = parseHTML(html)
-
-      const firstIsNewest = false
+      const topIsNewest = channelsObj[id].topIsNewest
 
       const newPosts = [];
-      document.querySelectorAll(containerSel).forEach(item => {
-
-        const feedObj = {
-          title: titleSel ? item.querySelector(titleSel)?.textContent.trim() : "title element not found",
-          pubDate: new Date().toUTCString()
-        }
-        if (textSel) {
-          console.log(textSel)
-          feedObj.description = item.querySelector(textSel)?.textContent.trim()
-        }
-        if (imgSel) {
-          console.log(imgSel)
-          feedObj.img = item.querySelector(imgSel)?.getAttribute("src")
-        }
-        if (firstIsNewest) {
-          newPosts.unshift(feedObj)
+      const pushTonewPosts = (newObjElement) => {
+        if (channelsObj[topIsNewest]) {
+          newPosts.unshift(newObjElement);
         } else {
-          newPosts.push(feedObj);
+          newPosts.push(newObjElement);
         }
-      });
+      }
 
+      $(containerSel).each((i, el) => {
+        const el$ = $(el);
+        const newObjElement = {
+          title: titleSel ? el$.find(titleSel).first().text().trim() : el$.text().trim(),
+          description: textSel ? el$.find(textSel).first().text().trim() : "",
+          img: imgSel ? el$.find(imgSel).first().attr("src") : "",
+          pubDate: new Date().toUTCString(),
+        }
+
+        pushTonewPosts(newObjElement)
+
+      });
 
       if (newPosts.length === 0) {
         return new Response(
@@ -163,6 +152,7 @@ async function fetchData(req, url) {
       const rssFile = path.join(RSS_FOLDER, safeFileName(id) + ".xml");
       const rssContent = readRSS(rssFile, urlParam);
       const existingItems = parseRSSItems(rssContent);
+
 
       const newItems = newPosts.filter(
         (p) => !existingItems.some((ei) => ei.title === p.title)
@@ -194,6 +184,7 @@ async function admin(req, url) {
 
 async function apiLocal(req, url) {
   try {
+    console.log(req)
     // Ensure content type is JSON
     if (req.headers.get("content-type") !== "application/json") {
       return new Response("Invalid Content-Type", { status: 400 });
