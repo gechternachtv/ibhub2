@@ -1,5 +1,5 @@
 //@ts-nocheck
-import { serve } from "bun";
+import { serve, file } from "bun";
 import fetch from "node-fetch";
 import * as cheerio from "cheerio";
 import { writeFileSync, existsSync, readFileSync, mkdirSync } from "fs";
@@ -12,10 +12,10 @@ if (!existsSync(RSS_FOLDER)) mkdirSync(RSS_FOLDER);
 const CHANNELS = path.resolve("./channels.json");
 
 // Helpers
-function readJSON(file, defaultValue) {
-  if (existsSync(file)) {
+function readJSON(filei, defaultValue = {}) {
+  if (existsSync(filei)) {
     try {
-      return JSON.parse(readFileSync(file, "utf-8"));
+      return JSON.parse(readFileSync(filei, "utf-8"));
     } catch {
       return defaultValue;
     }
@@ -23,8 +23,8 @@ function readJSON(file, defaultValue) {
   return defaultValue;
 }
 
-function writeJSON(file, data) {
-  writeFileSync(file, JSON.stringify(data, null, 2));
+function writeJSON(filei, data) {
+  writeFileSync(filei, JSON.stringify(data, null, 2));
 }
 
 function safeFileName(url) {
@@ -97,8 +97,8 @@ function generateRSS(items, pageUrl, title) {
 }
 
 
-async function fetchData(req, url) {
-  const id = url.searchParams.get("id");
+async function fetchData(req) {
+  const id = req.params.id
   if (!id) return new Response("Missing id param", { status: 400 });
 
   const channelsObj = readJSON(CHANNELS, {});
@@ -182,44 +182,38 @@ async function admin(req, url) {
   return new Response("yooo", { status: 200 });
 }
 
-async function apiLocal(req, url) {
-  try {
-    console.log(req)
-    // Ensure content type is JSON
-    if (req.headers.get("content-type") !== "application/json") {
-      return new Response("Invalid Content-Type", { status: 400 });
-    }
 
-    // Parse the JSON body
-    const data = await req.json();
-    console.log("Received JSON:", data);
-
-    return new Response(JSON.stringify({ status: "ok" }), {
-      headers: { "Content-Type": "application/json" },
-    });
-  } catch (err) {
-    return new Response("Invalid JSON", { status: 400 });
-  }
+function withCORS(res) {
+  res.headers.set("Access-Control-Allow-Origin", "*");
+  res.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.headers.set("Access-Control-Allow-Headers", "*");
+  return res;
 }
 
-
-console.log("seving on http://localhost:3013")
+const port = 3013
+console.log(`:D http://localhost:${port}`)
 serve({
-  port: 3013,
-  async fetch(req) {
-    const url = new URL(req.url)
+  port: port,
+  routes: {
+    "/rss/:id": async req => {
+      return await fetchData(req)
+    },
+    "/api/ch": {
+      OPTIONS: () => withCORS(new Response(null, { status: 204 })),
+      GET: () => withCORS(new Response(file("channels.json"))),
+      POST: async req => {
+        const post = await req.json();
+        const channelsin = readJSON("channels.json")
+        writeJSON("channels.json", { ...channelsin, ...post })
+        return withCORS(Response.json(post));
+      },
+      DELETE: () => new Response(null, { status: 204 })
+    },
+    "/*": req => {
+      const url = new URL(req.url);
+      const path = url.pathname === "/" ? "/index.html" : url.pathname;
+      return new Response(file("frontend/dist" + path));
 
-
-    if (url.pathname === "/api" && req.method === "POST") {
-      return await apiLocal(req, url)
     }
-
-    if (url.pathname === "/_") {
-      return await admin(req, url)
-    }
-    if (url.pathname === "/") {
-      return await fetchData(req, url)
-    }
-
-  },
+  }
 });

@@ -1,2 +1,5 @@
 rss_feeds
 channels.json
+frontend/node_modules
+frontend/yarn.lock
+frontend/dist
