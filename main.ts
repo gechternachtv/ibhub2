@@ -57,14 +57,14 @@ function parseRSSItems(rss) {
   return items;
 }
 
-// Convert relative img URL to full URL
+
 function absoluteUrl(urlToCheck, originalUrl) {
   // console.log(urlToCheck, originalUrl)
   try {
-    // If already a full URL, return as is
+
     return new URL(urlToCheck).href;
   } catch {
-    // Otherwise, join with domain of originalUrl
+
     const orig = new URL(originalUrl);
     // console.log(`${orig.origin}${urlToCheck.startsWith("/") ? "" : "/"}${urlToCheck}`)
     return `${orig.origin}${urlToCheck.startsWith("/") ? "" : "/"}${urlToCheck}`;
@@ -177,10 +177,7 @@ async function fetchData(req) {
 
 }
 
-async function admin(req, url) {
-  console.log(req, url)
-  return new Response("yooo", { status: 200 });
-}
+
 
 
 function withCORS(res) {
@@ -198,6 +195,9 @@ serve({
     "/rss/:id": async req => {
       return await fetchData(req)
     },
+    "/xml/:id": req => {
+      return withCORS(new Response(file(`rss_feeds/${safeFileName(req.params.id)}.xml`)))
+    },
     "/api/ch": {
       OPTIONS: () => withCORS(new Response(null, { status: 204 })),
       GET: () => withCORS(new Response(file("channels.json"))),
@@ -207,13 +207,26 @@ serve({
         writeJSON("channels.json", { ...channelsin, ...post })
         return withCORS(Response.json(post));
       },
-      DELETE: () => new Response(null, { status: 204 })
+      DELETE: async req => {
+        const json = await req.json();
+        const channelsin = readJSON("channels.json")
+        delete channelsin[json.target]
+        writeJSON("channels.json", channelsin)
+        return withCORS(Response.json({ status: "complete" }));
+      }
     },
+    // "/api/meta": {
+    //   POST: async req => {
+    //     const json = await req.json();
+    //     if (json.page) {
+    //       return withCORS(new Response(file("channels.json")))
+    //     }
+    //   },
+    // },
     "/*": req => {
       const url = new URL(req.url);
       const path = url.pathname === "/" ? "/index.html" : url.pathname;
       return new Response(file("frontend/dist" + path));
-
     }
   }
 });
