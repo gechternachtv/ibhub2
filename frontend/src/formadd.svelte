@@ -1,8 +1,10 @@
 <script>
+    import Rsspreview from "./rsspreview.svelte";
     import { currentForm, currentName } from "./stores.js";
-    let { update, initialData } = $props();
+    let { update } = $props();
 
-    // local state for each input
+    let feed = $state({});
+
     let name = $state("");
     let url = $state("");
     let container = $state("");
@@ -11,6 +13,8 @@
     let img = $state("");
     let icon = $state("");
     let desc = $state("");
+
+    let showimg = $state(false);
 
     currentName.subscribe((value) => {
         console.log("changed from subscription/!");
@@ -25,6 +29,23 @@
         img = value.img;
         icon = value.icon;
         desc = value.desc;
+    });
+
+    $effect(() => {
+        try {
+            console.log(icon);
+            if (icon != "") {
+                const isimgvalidurl = new URL(icon);
+                if (isimgvalidurl) {
+                    showimg = true;
+                }
+            } else {
+                showimg = false;
+            }
+        } catch (error) {
+            showimg = false;
+            console.warn(error);
+        }
     });
 
     async function handleSubmit(e) {
@@ -44,52 +65,176 @@
         console.log("Server response:", data);
         update();
     }
+
+    const handleFetchMeta = async () => {
+        const data = {
+            page: url,
+            container: container,
+            imgselector: img,
+            title: title,
+        };
+        console.log(JSON.stringify(data));
+
+        const res = await fetch("http://localhost:3013/api/meta", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(data),
+        });
+
+        const json = await res.json();
+
+        console.log("Server responses:", json);
+
+        currentForm.update((e) => {
+            e.url = url;
+            e.container = container;
+            e.title = title;
+            e.text = text;
+            e.img = img;
+            e.icon = icon;
+            e.desc = desc;
+
+            e.desc = json.title;
+            e.icon = json.image;
+            console.log(e);
+
+            return e;
+        });
+
+        currentName.update((e) => {
+            console.log(e);
+            if (e == "") {
+                return json.title;
+            } else {
+                return e;
+            }
+        });
+
+        if (name == "") {
+            name = json.title;
+        }
+    };
+
+    const handlePreview = async () => {
+        const json = {
+            name,
+            container,
+            title,
+            text,
+            img,
+            url,
+            icon,
+            desc,
+        };
+
+        const res = await fetch("http://localhost:3013/api/previewrss", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(json),
+        });
+        console.log(res);
+        const data = await res.json();
+        console.log("Server response:", data);
+        feed = data;
+    };
 </script>
 
 <main>
-    <form on:submit={handleSubmit}>
-        <label>
-            Name:
-            <input type="text" bind:value={name} />
-        </label>
-        <br />
-        <label>
-            Url:
-            <input type="text" bind:value={url} />
-        </label>
-        <br />
-        <label>
-            Container element:
-            <input type="text" bind:value={container} />
-        </label>
-        <br />
-        <label>
-            Title element:
-            <input type="text" bind:value={title} />
-        </label>
-        <br />
-        <label>
-            Text element:
-            <input type="text" bind:value={text} />
-        </label>
-        <br />
-        <label>
-            Img element:
-            <input type="text" bind:value={img} />
-        </label>
-        <br />
+    <div class="grid">
+        <form onsubmit={handleSubmit}>
+            <label>
+                Name(id):
+                <input type="text" bind:value={name} />
+            </label>
 
-        <label>
-            Icon:
-            <input type="text" bind:value={icon} />
-        </label>
-        <br />
+            <label>
+                Url:
+                <input type="text" bind:value={url} />
+            </label>
 
-        <label>
-            Description:
-            <input type="text" bind:value={desc} />
-        </label>
-        <br />
-        <button type="submit">Send</button>
-    </form>
+            <label>
+                Container element:
+                <input type="text" bind:value={container} />
+            </label>
+
+            <label>
+                Title element:
+                <input type="text" bind:value={title} />
+            </label>
+
+            <label>
+                Text element:
+                <input type="text" bind:value={text} />
+            </label>
+
+            <label>
+                Img element:
+                <input type="text" bind:value={img} />
+            </label>
+
+            <label>
+                Icon:
+                <input type="text" bind:value={icon} />
+            </label>
+
+            <label>
+                Description:
+                <input type="text" bind:value={desc} />
+            </label>
+        </form>
+        <div class="controls">
+            <button onclick={handleSubmit}>Send</button>
+            <button onclick={handleFetchMeta}>fetch meta</button>
+            <button onclick={handlePreview}>preview</button>
+        </div>
+    </div>
+    <div class="rsspreview">
+        <Rsspreview {feed}></Rsspreview>
+    </div>
+    <div class="imgpreview">
+        {#if showimg}
+            <img src={icon} alt={name} />
+        {/if}
+    </div>
 </main>
+
+<style>
+    * {
+        font-size: 12px;
+        font-family: bitbuntu;
+    }
+    main {
+        background: #b70000;
+        color: white;
+        padding: 20px;
+        display: grid;
+        grid-template-columns: 1fr 2fr auto;
+        gap: 20px;
+    }
+
+    input {
+        border-radius: 3px;
+        border: 0px;
+    }
+    .controls {
+        display: flex;
+        gap: 6px;
+        padding-top: 10px;
+    }
+    button {
+        color: #b70000;
+        background: white;
+        border: 0px;
+        border-radius: 10px;
+        padding: 0 8px;
+    }
+    form {
+        display: grid;
+        gap: 6px;
+    }
+    img {
+        max-width: 400px;
+    }
+</style>

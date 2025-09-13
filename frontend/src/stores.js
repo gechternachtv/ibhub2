@@ -1,12 +1,12 @@
 import { writable } from "svelte/store";
-export const currentName = writable("name")
+export const currentName = writable("")
 export const currentForm = writable({
-    url: "url",
-    container: "selector",
-    title: "selector",
-    text: "selector",
-    img: "selector",
-    icon: "url",
-    desc: "text"
+    url: "",
+    container: "",
+    title: "",
+    text: "",
+    img: "",
+    icon: "",
+    desc: ""
 
 });

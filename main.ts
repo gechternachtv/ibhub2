@@ -4,6 +4,16 @@ import fetch from "node-fetch";
 import * as cheerio from "cheerio";
 import { writeFileSync, existsSync, readFileSync, mkdirSync } from "fs";
 import path from "path";
+import { existsSync } from "fs";
+import { XMLParser, XMLBuilder } from "fast-xml-parser";
+
+
+const xmltojson = new XMLParser();
+const xmlbuilder = new XMLBuilder({
+  ignoreAttributes: false,
+  format: true,
+});
+
 
 // Folder to store RSS files
 const RSS_FOLDER = path.resolve("./rss_feeds");
@@ -33,28 +43,33 @@ function safeFileName(url) {
 
 function readRSS(filePath, feedTitle) {
   if (existsSync(filePath)) return readFileSync(filePath, "utf-8");
-  return `<?xml version="1.0" encoding="UTF-8" ?>
-<rss version="2.0">
-<channel>
-  <title>${feedTitle}</title>
-  <link>http://localhost:3000/</link>
-  <description>RSS feed for ${feedTitle}</description>
-</channel>
-</rss>`;
+
+  const xmlobj = {
+    rss: {
+      version: "2.0",
+      channel: {
+        title: feedTitle,
+        link: "http://localhost:3031/",
+        description: `ibhub RSS feed for ${feedTitle}`,
+      },
+    },
+  };
+
+
+
+  return xmlbuilder.build(xmlobj);
 }
 
 function parseRSSItems(rss) {
-  const $ = cheerio.load(rss, { xmlMode: true });
-  const items = [];
-  $("item").each((_, el) => {
-    items.push({
-      title: $(el).find("title").text(),
-      pubDate: $(el).find("pubDate").text(),
-      description: $(el).find("description").text(),
-      img: $(el).find("enclosure").attr("url"),
-    });
-  });
-  return items;
+
+
+  const obs = xmltojson.parse(rss)
+  console.log(obs)
+  const rsschannel = obs.rss.channel;
+  const items = rsschannel.item ? rsschannel.item : [];
+
+  return items
+
 }
 
 
@@ -71,54 +86,76 @@ function absoluteUrl(urlToCheck, originalUrl) {
   }
 }
 
-// Generate RSS XML from items
+
 function generateRSS(items, pageUrl, title) {
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0">
-<channel>
-  <title>${title}</title>
-  <link>${pageUrl}</link>
-  <description>RSS feed for ${title}</description>
-  ${items
-      .map((it) => {
-        const imgTag = it.img ? `<img src="${absoluteUrl(it.img, pageUrl)}" />` : "";
-        const description = it.description || "";
-        return `
-  <item>
-    <title><![CDATA[${it.title}]]></title>
-    <link>${pageUrl}</link>
-    <pubDate>${it.pubDate}</pubDate>
-    <description><![CDATA[${imgTag} ${description}]]></description>
-  </item>`;
-      })
-      .join("")}
-</channel>
-</rss>`;
+  const obj = {
+    rss: {
+      version: "2.0",
+      channel: {
+        title,
+        link: pageUrl,
+        description: `ibhub RSS feed for ${title}`,
+        item: items.map((it) => {
+          const descParts = [];
+          if (it.img) descParts.push(`<img src="${absoluteUrl(it.img, pageUrl)}" />`);
+          if (it.description) descParts.push(it.description);
+
+          return {
+            title: { "#cdata": it.title },
+            link: pageUrl,
+            pubDate: it.pubDate ?? "",
+            description: { "#cdata": descParts.join(" ") },
+          };
+        }),
+      },
+    },
+  };
+
+  console.log(xmlbuilder.build(obj))
+  return xmlbuilder.build(obj);
+
+
 }
 
 
-async function fetchData(req) {
+async function fetchFromId(req) {
   const id = req.params.id
   if (!id) return new Response("Missing id param", { status: 400 });
-
   const channelsObj = readJSON(CHANNELS, {});
-  if (channelsObj[id]) {
-    // console.log(channelsObj[id])
+
+  return await fetchData(channelsObj[id], id)
+}
+
+async function fetchDataPreviewjson(post) {
+  console.log(post)
+  const res = await fetchData(post, post.name, true)
+  if (res.error) {
+    return { error: res.error }
+  } else {
+    return { data: xmltojson.parse(res.data) }
+  }
+}
+
+
+async function fetchData(channelsObj, id, skipsave = false) {
+
+  if (channelsObj) {
+
     //data
-    if (!channelsObj[id].url) {
+    if (!channelsObj.url) {
       return new Response(`Missing url param on channels.json entry ${id}`, { status: 400 });
     }
     try {
-      const res = await fetch(channelsObj[id].url);
+      const res = await fetch(channelsObj.url);
       const html = await res.text();
       const $ = cheerio.load(html);
 
-      const urlParam = channelsObj[id].url
-      const containerSel = channelsObj[id].container || "body";
-      const titleSel = channelsObj[id].title;
-      const textSel = channelsObj[id].text;
-      const imgSel = channelsObj[id].img;
-      const topIsNewest = channelsObj[id].topIsNewest
+      const urlParam = channelsObj.url
+      const containerSel = channelsObj.container || "body";
+      const titleSel = channelsObj.title;
+      const textSel = channelsObj.text;
+      const imgSel = channelsObj.img;
+      const topIsNewest = channelsObj.topIsNewest
 
       const newPosts = [];
       const pushTonewPosts = (newObjElement) => {
@@ -155,29 +192,46 @@ async function fetchData(req) {
 
 
       const newItems = newPosts.filter(
-        (p) => !existingItems.some((ei) => ei.title === p.title)
-      );
+        (p) => !existingItems.some((ei) => {
+          return (ei.title === p.title)
+          // if (ei.title === p.title) {
+          //   if (ei.description === p.description) {
+          //     return true
+          //   } else {
+          //     return false
+          //   }
+          // } else {
+          //   return false
+          // }
+        }
+
+        ))
 
       const allItems = [...existingItems, ...newItems];
       const rssXML = generateRSS(allItems, urlParam, id);
-      writeFileSync(rssFile, rssXML);
+      if (!skipsave) {
+        writeFileSync(rssFile, rssXML);
+      }
 
-      return new Response(rssXML, {
-        status: 200,
-        headers: { "Content-Type": "application/rss+xml; charset=utf-8" },
-      });
+      return {
+        data: rssXML
+      }
+      // return withCORS(new Response(rssXML, {
+      //   status: 200,
+      //   headers: { "Content-Type": "application/rss+xml; charset=utf-8" },
+      // }))
     } catch (err) {
-      return new Response(`Error: ${err}`, { status: 500 });
+      return { error: err }
+      // return withCORS(new Response(`Error: ${err}`, { status: 500 }))
     }
 
     //data
   } else {
-    return new Response(`Channel not found, please access /_ to add this new channel or add it manually on channels.json`, { status: 500 });
+    return { error: `Channel not found, please access /_ to add this new channel or add it manually on channels.json` }
+    // return withCORS(new Response(`Channel not found, please access /_ to add this new channel or add it manually on channels.json`, { status: 500 }))
   }
 
 }
-
-
 
 
 function withCORS(res) {
@@ -187,13 +241,64 @@ function withCORS(res) {
   return res;
 }
 
+async function getmeta(pageurl) {
+  try {
+
+    const res = await fetch(pageurl.page);
+    const html = await res.text();
+    const $ = cheerio.load(html);
+    console.log($(pageurl.container)?.first())
+    const title =
+      $('meta[property="og:title"]').attr("content") ||
+      $('meta[name="twitter:title"]').attr("content") ||
+      $("title").text() ||
+      $(pageurl.container)?.first().find(pageurl.title)?.first().text() ||
+      $("h1").first().text() ||
+      null
+    let image =
+      $('meta[property="og:image"]').attr("content") ||
+      $('meta[name="twitter:image"]').attr("content") ||
+      $('link[rel="icon"]').attr("href") ||
+      $('link[rel="shortcut icon"]').attr("href") ||
+      $(pageurl.container)?.first().find(pageurl.imgselector)?.first().attr("src") ||
+      null;
+    return { title: title, image: image }
+  } catch (error) {
+    return { error: error }
+  }
+}
+
 const port = 3013
 console.log(`:D http://localhost:${port}`)
 serve({
   port: port,
   routes: {
+    "/api/previewrss": {
+      OPTIONS: () => withCORS(new Response(null, { status: 204 })),
+      POST: async req => {
+        const post = await req.json();
+        const res = await fetchDataPreviewjson(post)
+        if (res.error) {
+          return withCORS(new Response(`Error: ${res.error}`, { status: 500 }))
+        } else {
+          return withCORS(Response.json(res.data));
+          // return withCORS(new Response(res.data, {
+          //   status: 200,
+          //   headers: { "Content-Type": "application/rss+xml; charset=utf-8" },
+          // }))
+        }
+      },
+    },
     "/rss/:id": async req => {
-      return await fetchData(req)
+      const res = await fetchFromId(req)
+      if (res.error) {
+        return withCORS(new Response(`Error: ${res.error}`, { status: 500 }))
+      } else {
+        return withCORS(new Response(res.data, {
+          status: 200,
+          headers: { "Content-Type": "application/rss+xml; charset=utf-8" },
+        }))
+      }
     },
     "/xml/:id": req => {
       return withCORS(new Response(file(`rss_feeds/${safeFileName(req.params.id)}.xml`)))
@@ -215,18 +320,29 @@ serve({
         return withCORS(Response.json({ status: "complete" }));
       }
     },
-    // "/api/meta": {
-    //   POST: async req => {
-    //     const json = await req.json();
-    //     if (json.page) {
-    //       return withCORS(new Response(file("channels.json")))
-    //     }
-    //   },
-    // },
+    "/api/meta": {
+      OPTIONS: () => withCORS(new Response(null, { status: 204 })),
+      POST: async req => {
+        const json = await req.json();
+        console.log(json)
+        console.log(json.page)
+        if (json.page) {
+          const meta = await getmeta(json)
+          return withCORS(Response.json(meta));
+        } else {
+          return new Response("Not Found", { status: 404 });
+        }
+      },
+    },
     "/*": req => {
       const url = new URL(req.url);
       const path = url.pathname === "/" ? "/index.html" : url.pathname;
-      return new Response(file("frontend/dist" + path));
+      if (existsSync("frontend/dist" + path)) {
+        return new Response(file("frontend/dist" + path));
+      } else {
+        return new Response("Not Found", { status: 404 });
+      }
+
     }
   }
 });

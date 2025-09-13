@@ -5,3 +5,9 @@
 <main>
   <Getallchans></Getallchans>
 </main>
+
+<style>
+  main {
+    padding: 10px;
+  }
+</style>
