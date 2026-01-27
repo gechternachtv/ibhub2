@@ -11,21 +11,16 @@ if (!existsSync(RSS_FOLDER)) mkdirSync(RSS_FOLDER);
 
 const CHANNELS = path.resolve("./channels.json");
 
-
-
-
-
 function jsonFeedToRSS(feed) {
   const doc = create({ version: "1.0", encoding: "UTF-8" })
     .ele("rss", { version: "2.0" })
-      .ele("channel")
-        .ele("title").txt(feed.title).up()
-        .ele("link").txt(feed.link).up()
-        .ele("description").txt(feed.description).up();
+    .ele("channel")
+    .ele("title").txt(feed.title).up()
+    .ele("link").txt(feed.link).up()
+    .ele("description").txt(feed.description).up();
 
   for (const item of feed.items) {
     const it = doc.ele("item");
-
     it.ele("title").dat(item.title).up();
     it.ele("link").txt(feed.link).up();
     it.ele("pubDate").txt(item.pubDate || "").up();
@@ -34,64 +29,37 @@ function jsonFeedToRSS(feed) {
     if (item.img) descParts.push(`<img src="${item.img}" />`);
     if (item.description) descParts.push(item.description);
 
-    it.ele("description").dat(descParts.join(" ")).up();
+    it.ele("description").dat(descParts.join("\n")).up();
   }
 
   return doc.end({ prettyPrint: true });
 }
 
-function rssResponse(feedJson) {
-  const xml = jsonFeedToRSS(feedJson);
-
-  return new Response(xml, {
-    headers: {
-      "Content-Type": "application/rss+xml; charset=utf-8",
-    },
-  });
-}
-
 function normalizeImgUrl(imgUrl, pageUrl) {
   if (!imgUrl || typeof imgUrl !== "string") return "";
-
   const trimmed = imgUrl.trim();
-
-  // reject base64 / data URLs
-  if (trimmed.startsWith("data:")) return "";
-
-  // absolute URL
+  if (!trimmed || trimmed.startsWith("data:")) return "";
   try {
-    const u = new URL(trimmed);
-    return u.href;
+    return new URL(trimmed).href;
   } catch {}
-
-  // relative root path
-  if (trimmed.startsWith("/")) {
-    try {
-      const base = new URL(pageUrl);
-      return base.origin + trimmed;
-    } catch {}
-  }
-
-  // relative path (no slash)
   try {
     const base = new URL(pageUrl);
-    return base.origin + "/" + trimmed;
+    return trimmed.startsWith("/")
+      ? base.origin + trimmed
+      : base.origin + "/" + trimmed;
   } catch {}
-
   return "";
 }
 
+const normalizeText = s => (s || "").replace(/\s+/g, " ").trim();
 
-
-function readJSON(filei, defaultValue = {}) {
-  if (existsSync(filei)) {
-    try {
-      return JSON.parse(readFileSync(filei, "utf-8"));
-    } catch {
-      return defaultValue;
-    }
+function readJSON(filei, def = {}) {
+  if (!existsSync(filei)) return def;
+  try {
+    return JSON.parse(readFileSync(filei, "utf-8"));
+  } catch {
+    return def;
   }
-  return defaultValue;
 }
 
 function writeJSON(filei, data) {
@@ -111,7 +79,6 @@ function readFeed(filePath, title, link) {
       return JSON.parse(readFileSync(filePath, "utf-8"));
     } catch {}
   }
-
   return {
     title,
     link,
@@ -124,23 +91,12 @@ function writeFeed(filePath, feed) {
   writeFileSync(filePath, JSON.stringify(feed, null, 2));
 }
 
-function absoluteUrl(urlToCheck, originalUrl) {
-  try {
-    return new URL(urlToCheck).href;
-  } catch {
-    const orig = new URL(originalUrl);
-    return `${orig.origin}${urlToCheck.startsWith("/") ? "" : "/"}${urlToCheck}`;
-  }
-}
-
 function withCORS(res) {
   res.headers.set("Access-Control-Allow-Origin", "*");
   res.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   res.headers.set("Access-Control-Allow-Headers", "*");
   return res;
 }
-
-/* ---------------- core scraping ---------------- */
 
 async function fetchData(channelsObj, id, skipsave = false) {
   if (!channelsObj || !channelsObj.url) {
@@ -170,54 +126,49 @@ async function fetchData(channelsObj, id, skipsave = false) {
 
       const title = titleSel
         ? el$.find(titleSel).first().text().trim()
-        : el$.text().trim();
+        : el$.clone().children().remove().end().text().trim();
 
-	const rawImg = imgSel ? el$.find(imgSel).first().attr("src") : "";
-	
+      const rawImg = imgSel
+        ? el$.find(imgSel).first().attr("src")
+        : el$.find("img").first().attr("src");
 
-	if (!title && !rawImg) return;
+      if (!title && !rawImg) return;
 
+      const img = normalizeImgUrl(rawImg, channelsObj.url);
 
-const finalTitle =
-  title || (rawImg ? `Image post – ${normalizeImgUrl(rawImg, channelsObj.url)}` : "");
-
-
+      const finalTitle =
+        title || (img ? `Image post – ${img}` : "");
 
       pushPost({
         title: finalTitle,
-        description: textSel ? el$.find(textSel).first().text().trim() : "",
-	img: normalizeImgUrl(rawImg, channelsObj.url),
+        description: textSel
+          ? el$.find(textSel).first().text()
+          : "",
+        img,
         pubDate: new Date().toUTCString()
       });
     });
 
-    if (newPosts.length === 0) {
+    if (!newPosts.length) {
       return { error: `No posts found for ${id}` };
     }
 
     const feedFile = path.join(RSS_FOLDER, safeFileName(id) + ".json");
     const feed = readFeed(feedFile, id, channelsObj.url);
 
-const freshItems = newPosts.filter(p => {
-  const textEmpty = !p.description || !p.description.trim();
+    const freshItems = newPosts.filter(p => {
+      const pTitle = normalizeText(p.title);
+      const pText = normalizeText(p.description);
+      const pImg = p.img || "";
 
-  return !feed.items.some(e => {
-    const imgSame = p.img && e.img && p.img === e.img;
-    const titleSame = e.title === p.title;
+      return !feed.items.some(e => {
+        const eTitle = normalizeText(e.title);
+        const eText = normalizeText(e.description);
+        const eImg = e.img || "";
 
-    // DROP only if:
-    // text is empty AND image is missing or repeated
-    if (textEmpty && (!p.img || imgSame)) {
-      return true;
-    }
-
-    // normal duplicate protection
-    if (titleSame) return true;
-    if (imgSame) return true;
-
-    return false;
-  });
-});
+        return pTitle === eTitle && pText === eText && pImg === eImg;
+      });
+    });
 
     feed.items.push(...freshItems);
 
@@ -232,18 +183,9 @@ const freshItems = newPosts.filter(p => {
 async function fetchFromId(req) {
   const id = req.params.id;
   if (!id) return { error: "Missing id param" };
-
   const channelsObj = readJSON(CHANNELS, {});
   return fetchData(channelsObj[id], id);
 }
-
-async function fetchDataPreviewjson(post) {
-  const res = await fetchData(post, post.name, true);
-  if (res.error) return { error: res.error };
-  return { data: res.data };
-}
-
-/* ---------------- meta scraping ---------------- */
 
 async function getmeta(pageurl) {
   try {
@@ -270,33 +212,23 @@ async function getmeta(pageurl) {
   }
 }
 
-/* ---------------- server ---------------- */
-
 const port = 3013;
 console.log(`:D http://localhost:${port}`);
 
 serve({
   port,
   routes: {
-
     "/rss/:id": async req => {
       const res = await fetchFromId(req);
-
       if (res.error) {
         return withCORS(new Response(res.error, { status: 500 }));
       }
-
-      const xml = jsonFeedToRSS(res.data);
-
       return withCORS(
-        new Response(xml, {
-          headers: {
-            "Content-Type": "application/rss+xml; charset=utf-8",
-          },
+        new Response(jsonFeedToRSS(res.data), {
+          headers: { "Content-Type": "application/rss+xml; charset=utf-8" }
         })
       );
     },
-
 
     "/json/:id": async req => {
       const res = await fetchFromId(req);
