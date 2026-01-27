@@ -10,7 +10,7 @@
     <div>{data.desc}</div>
 
     <div class="control">
-        <a href="http://localhost:3013/xml/{name}">xml</a>
+        <a href="http://localhost:3013/json/{name}">json</a>
         <a href="http://localhost:3013/rss/{name}">rss</a>
         <button onclick={Delete}>del</button>
         <button onclick={config}> &lt;&lt; </button>

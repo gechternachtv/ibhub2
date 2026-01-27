@@ -13,9 +13,8 @@
     let img = $state("");
     let icon = $state("");
     let desc = $state("");
-
     let showimg = $state(false);
-
+    let lastUrl = "";
     currentName.subscribe((value) => {
         console.log("changed from subscription/!");
         console.log(value);
@@ -30,6 +29,14 @@
         icon = value.icon;
         desc = value.desc;
     });
+
+$effect(() => {
+    if (lastUrl && url !== lastUrl) {
+        feed = {};
+    }
+    lastUrl = url;
+});
+
 
     $effect(() => {
         try {
@@ -116,29 +123,19 @@
             name = json.title;
         }
     };
+const handlePreview = async () => {
+    if (!name) return;
 
-    const handlePreview = async () => {
-        const json = {
-            name,
-            container,
-            title,
-            text,
-            img,
-            url,
-            icon,
-            desc,
-        };
+    const res = await fetch(`http://localhost:3013/json/${encodeURIComponent(name)}`);
 
-        const res = await fetch("http://localhost:3013/api/previewrss", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(json),
-        });
-        console.log(res);
-        const data = await res.json();
-        console.log("Server response:", data);
-        feed = data;
-    };
+    if (!res.ok) {
+        console.error("Preview failed");
+        return;
+    }
+
+    const data = await res.json();
+    feed = data;
+};
 </script>
 
 <main>
@@ -187,7 +184,7 @@
         <div class="controls">
             <button onclick={handleSubmit}>Send</button>
             <button onclick={handleFetchMeta}>fetch meta</button>
-            <button onclick={handlePreview}>preview</button>
+            <button onclick={handlePreview}>fetch posts</button>
         </div>
     </div>
     <div class="rsspreview">

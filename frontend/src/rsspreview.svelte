@@ -4,21 +4,9 @@
     let showfeed = $state(false);
 
     $effect(() => {
-        console.log("feed:");
-        console.log(feed);
         try {
-            if (feed?.rss?.channel) {
-                if (feed.rss.channel.item) {
-                    if (feed.rss.channel.item.length) {
-                        showfeed = true;
-                        return;
-                    }
-                }
-            }
-            showfeed = false;
-            return;
-        } catch (error) {
-            console.warn(error);
+            showfeed = Array.isArray(feed?.items) && feed.items.length > 0;
+        } catch {
             showfeed = false;
         }
     });
@@ -26,12 +14,12 @@
 
 <main>
     {#if showfeed}
-        {#each feed["rss"]["channel"]["item"] as item}
-            <div>
+        {#each feed.items as item}
+            <div class="previewblock">
                 <h1>{item.title}</h1>
-                <div>
-                    {@html item.description}
-                </div>
+                {#if item.description}
+                    <div>{@html item.description}</div>
+                {/if}
             </div>
         {/each}
     {/if}
@@ -41,5 +29,15 @@
     main {
         max-height: 300px;
         overflow: scroll;
+    }
+
+    .previewblock {
+    background: #00000029;
+padding: 13px 6px;
+	    margin-bottom:10px;
+    }
+
+    h1 {
+    margin-top: 0;
     }
 </style>

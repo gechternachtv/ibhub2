@@ -4,11 +4,51 @@ import fetch from "node-fetch";
 import * as cheerio from "cheerio";
 import { writeFileSync, existsSync, readFileSync, mkdirSync } from "fs";
 import path from "path";
+import { create } from "xmlbuilder2";
 
 const RSS_FOLDER = path.resolve("./rss_feeds");
 if (!existsSync(RSS_FOLDER)) mkdirSync(RSS_FOLDER);
 
 const CHANNELS = path.resolve("./channels.json");
+
+
+
+
+
+function jsonFeedToRSS(feed) {
+  const doc = create({ version: "1.0", encoding: "UTF-8" })
+    .ele("rss", { version: "2.0" })
+      .ele("channel")
+        .ele("title").txt(feed.title).up()
+        .ele("link").txt(feed.link).up()
+        .ele("description").txt(feed.description).up();
+
+  for (const item of feed.items) {
+    const it = doc.ele("item");
+
+    it.ele("title").dat(item.title).up();
+    it.ele("link").txt(feed.link).up();
+    it.ele("pubDate").txt(item.pubDate || "").up();
+
+    const descParts = [];
+    if (item.img) descParts.push(`<img src="${item.img}" />`);
+    if (item.description) descParts.push(item.description);
+
+    it.ele("description").dat(descParts.join(" ")).up();
+  }
+
+  return doc.end({ prettyPrint: true });
+}
+
+function rssResponse(feedJson) {
+  const xml = jsonFeedToRSS(feedJson);
+
+  return new Response(xml, {
+    headers: {
+      "Content-Type": "application/rss+xml; charset=utf-8",
+    },
+  });
+}
 
 /* ---------------- helpers ---------------- */
 
@@ -181,6 +221,26 @@ console.log(`:D http://localhost:${port}`);
 serve({
   port,
   routes: {
+
+    "/rss/:id": async req => {
+      const res = await fetchFromId(req);
+
+      if (res.error) {
+        return withCORS(new Response(res.error, { status: 500 }));
+      }
+
+      const xml = jsonFeedToRSS(res.data);
+
+      return withCORS(
+        new Response(xml, {
+          headers: {
+            "Content-Type": "application/rss+xml; charset=utf-8",
+          },
+        })
+      );
+    },
+
+
     "/json/:id": async req => {
       const res = await fetchFromId(req);
       if (res.error) {
