@@ -112,13 +112,11 @@ async function fetchData(channelsObj, id, skipsave = false) {
     const titleSel = channelsObj.title;
     const textSel = channelsObj.text;
     const imgSel = channelsObj.img;
-    const topIsNewest = channelsObj.topIsNewest;
 
     const newPosts = [];
 
     const pushPost = p => {
-      if (topIsNewest) newPosts.unshift(p);
-      else newPosts.push(p);
+      newPosts.push(p);
     };
 
     $(containerSel).each((_, el) => {
@@ -152,6 +150,12 @@ async function fetchData(channelsObj, id, skipsave = false) {
     if (!newPosts.length) {
       return { error: `No posts found for ${id}` };
     }
+
+    // === FIX: normalize order BEFORE comparison ===
+    if (channelsObj.newontop === true) {
+      newPosts.reverse();
+    }
+    // ==============================================
 
     const feedFile = path.join(RSS_FOLDER, safeFileName(id) + ".json");
     const feed = readFeed(feedFile, id, channelsObj.url);

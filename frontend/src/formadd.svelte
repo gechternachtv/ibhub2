@@ -4,7 +4,7 @@
     let { update } = $props();
 
     let feed = $state({});
-
+    let newontop = $state(false);
     let name = $state("");
     let url = $state("");
     let container = $state("");
@@ -15,11 +15,13 @@
     let desc = $state("");
     let showimg = $state(false);
     let lastUrl = "";
+
     currentName.subscribe((value) => {
         console.log("changed from subscription/!");
         console.log(value);
         name = value;
     });
+
     currentForm.subscribe((value) => {
         url = value.url;
         container = value.container;
@@ -28,15 +30,18 @@
         img = value.img;
         icon = value.icon;
         desc = value.desc;
+
+        if ("newontop" in value) {
+            newontop = !!value.newontop;
+        }
     });
 
-$effect(() => {
-    if (lastUrl && url !== lastUrl) {
-        feed = {};
-    }
-    lastUrl = url;
-});
-
+    $effect(() => {
+        if (lastUrl && url !== lastUrl) {
+            feed = {};
+        }
+        lastUrl = url;
+    });
 
     $effect(() => {
         try {
@@ -59,7 +64,7 @@ $effect(() => {
         e.preventDefault();
 
         const json = {
-            [name]: { container, title, text, img, url, icon, desc },
+            [name]: { container, title, newontop, text, img, url, icon, desc },
         };
 
         const res = await fetch("http://localhost:3013/api/ch", {
@@ -80,7 +85,6 @@ $effect(() => {
             imgselector: img,
             title: title,
         };
-        console.log(JSON.stringify(data));
 
         const res = await fetch("http://localhost:3013/api/meta", {
             method: "POST",
@@ -91,8 +95,6 @@ $effect(() => {
         });
 
         const json = await res.json();
-
-        console.log("Server responses:", json);
 
         currentForm.update((e) => {
             e.url = url;
@@ -105,13 +107,11 @@ $effect(() => {
 
             e.desc = json.title;
             e.icon = json.image;
-            console.log(e);
 
             return e;
         });
 
         currentName.update((e) => {
-            console.log(e);
             if (e == "") {
                 return json.title;
             } else {
@@ -123,19 +123,22 @@ $effect(() => {
             name = json.title;
         }
     };
-const handlePreview = async () => {
-    if (!name) return;
 
-    const res = await fetch(`http://localhost:3013/json/${encodeURIComponent(name)}`);
+    const handlePreview = async () => {
+        if (!name) return;
 
-    if (!res.ok) {
-        console.error("Preview failed");
-        return;
-    }
+        const res = await fetch(
+            `http://localhost:3013/json/${encodeURIComponent(name)}`
+        );
 
-    const data = await res.json();
-    feed = data;
-};
+        if (!res.ok) {
+            console.error("Preview failed");
+            return;
+        }
+
+        const data = await res.json();
+        feed = data;
+    };
 </script>
 
 <main>
@@ -180,16 +183,25 @@ const handlePreview = async () => {
                 Description:
                 <input type="text" bind:value={desc} />
             </label>
+
+            <label>
+                new on top
+                <input type="checkbox" bind:checked={newontop} />
+            </label>
+
+            <button type="submit">Send</button>
         </form>
+
         <div class="controls">
-            <button onclick={handleSubmit}>Send</button>
             <button onclick={handleFetchMeta}>fetch meta</button>
             <button onclick={handlePreview}>fetch posts</button>
         </div>
     </div>
+
     <div class="rsspreview">
         <Rsspreview {feed}></Rsspreview>
     </div>
+
     <div class="imgpreview">
         {#if showimg}
             <img src={icon} alt={name} />
@@ -234,4 +246,9 @@ const handlePreview = async () => {
     img {
         max-width: 400px;
     }
+button[type="submit"]{
+  width: 100%;
+max-width: 76px;
+}
+
 </style>
