@@ -39,5 +39,6 @@ padding: 13px 6px;
 
     h1 {
     margin-top: 0;
+ font-family: "MS PGothic"
     }
 </style>

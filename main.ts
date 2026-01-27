@@ -50,7 +50,38 @@ function rssResponse(feedJson) {
   });
 }
 
-/* ---------------- helpers ---------------- */
+function normalizeImgUrl(imgUrl, pageUrl) {
+  if (!imgUrl || typeof imgUrl !== "string") return "";
+
+  const trimmed = imgUrl.trim();
+
+  // reject base64 / data URLs
+  if (trimmed.startsWith("data:")) return "";
+
+  // absolute URL
+  try {
+    const u = new URL(trimmed);
+    return u.href;
+  } catch {}
+
+  // relative root path
+  if (trimmed.startsWith("/")) {
+    try {
+      const base = new URL(pageUrl);
+      return base.origin + trimmed;
+    } catch {}
+  }
+
+  // relative path (no slash)
+  try {
+    const base = new URL(pageUrl);
+    return base.origin + "/" + trimmed;
+  } catch {}
+
+  return "";
+}
+
+
 
 function readJSON(filei, defaultValue = {}) {
   if (existsSync(filei)) {
@@ -141,12 +172,21 @@ async function fetchData(channelsObj, id, skipsave = false) {
         ? el$.find(titleSel).first().text().trim()
         : el$.text().trim();
 
-      if (!title) return;
+	const rawImg = imgSel ? el$.find(imgSel).first().attr("src") : "";
+	
+
+	if (!title && !rawImg) return;
+
+
+const finalTitle =
+  title || (rawImg ? `Image post – ${normalizeImgUrl(rawImg, channelsObj.url)}` : "");
+
+
 
       pushPost({
-        title,
+        title: finalTitle,
         description: textSel ? el$.find(textSel).first().text().trim() : "",
-        img: imgSel ? el$.find(imgSel).first().attr("src") : "",
+	img: normalizeImgUrl(rawImg, channelsObj.url),
         pubDate: new Date().toUTCString()
       });
     });
@@ -158,9 +198,26 @@ async function fetchData(channelsObj, id, skipsave = false) {
     const feedFile = path.join(RSS_FOLDER, safeFileName(id) + ".json");
     const feed = readFeed(feedFile, id, channelsObj.url);
 
-    const freshItems = newPosts.filter(
-      p => !feed.items.some(e => e.title === p.title)
-    );
+const freshItems = newPosts.filter(p => {
+  const textEmpty = !p.description || !p.description.trim();
+
+  return !feed.items.some(e => {
+    const imgSame = p.img && e.img && p.img === e.img;
+    const titleSame = e.title === p.title;
+
+    // DROP only if:
+    // text is empty AND image is missing or repeated
+    if (textEmpty && (!p.img || imgSame)) {
+      return true;
+    }
+
+    // normal duplicate protection
+    if (titleSame) return true;
+    if (imgSame) return true;
+
+    return false;
+  });
+});
 
     feed.items.push(...freshItems);
 
