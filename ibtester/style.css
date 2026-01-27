@@ -1,0 +1,38 @@
+body {
+    font-size: 12px;
+    padding: 30px;
+    background: #f8e3ca;
+    min-height: 100vh;
+}
+
+header {
+    background: #117743;
+    font-size: 24px;
+    padding: 5px;
+    color: white;
+    border-radius: 10px;
+    margin-bottom: 10px;
+}
+
+button {
+    border: 0px;
+    padding: 4px;
+    background: #117743;
+    color: #f0e0d6;
+    border-radius: 4px;
+    margin-top: 4px;
+    cursor: pointer;
+}
+
+.sandbox {
+    font-family: noto-sans;
+    padding: 10px;
+    background: #fff9f5;
+    border-radius: 10px;
+    margin-top: 10px;
+}
+
+img.header {
+    max-width: 202px;
+    border-radius: 10px;
+}
