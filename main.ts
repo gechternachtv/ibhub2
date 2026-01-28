@@ -6,10 +6,45 @@ import { writeFileSync, existsSync, readFileSync, mkdirSync } from "fs";
 import path from "path";
 import { create } from "xmlbuilder2";
 
+/* =========================
+   apiChecker (INLINE)
+   ========================= */
+function apiChecker({ json, path, prev }) {
+  if (!path) return { updated: false, value: "" };
+
+  const parts = path.split(".").filter(Boolean);
+  let cur = json;
+
+  for (const p of parts) {
+    if (cur == null) return { updated: false, value: "" };
+    cur = cur[p];
+  }
+
+  let value = "";
+
+  if (Array.isArray(cur)) {
+    if (cur.length === 0) return { updated: false, value: "" };
+    value = String(cur[cur.length - 1]);
+  } else {
+    value = String(cur);
+  }
+
+  const norm = s => (s || "").replace(/\s+/g, " ").trim();
+
+  if (norm(value) !== norm(prev)) {
+    return { updated: true, value };
+  }
+
+  return { updated: false, value };
+}
+/* ========================= */
+
 const RSS_FOLDER = path.resolve("./rss_feeds");
 if (!existsSync(RSS_FOLDER)) mkdirSync(RSS_FOLDER);
 
 const CHANNELS = path.resolve("./channels.json");
+
+/* ========================= */
 
 function jsonFeedToRSS(feed) {
   const doc = create({ version: "1.0", encoding: "UTF-8" })
@@ -35,23 +70,18 @@ function jsonFeedToRSS(feed) {
   return doc.end({ prettyPrint: true });
 }
 
-function normalizeImgUrl(imgUrl, pageUrl) {
-  if (!imgUrl || typeof imgUrl !== "string") return "";
-  const trimmed = imgUrl.trim();
-  if (!trimmed || trimmed.startsWith("data:")) return "";
-  try {
-    return new URL(trimmed).href;
-  } catch {}
-  try {
-    const base = new URL(pageUrl);
-    return trimmed.startsWith("/")
-      ? base.origin + trimmed
-      : base.origin + "/" + trimmed;
-  } catch {}
-  return "";
-}
-
 const normalizeText = s => (s || "").replace(/\s+/g, " ").trim();
+
+/* ===== FIX: normalize image URLs ===== */
+function normalizeImgUrl(src, baseUrl) {
+  if (!src) return "";
+  try {
+    return new URL(src, baseUrl).href;
+  } catch {
+    return src;
+  }
+}
+/* =================================== */
 
 function readJSON(filei, def = {}) {
   if (!existsSync(filei)) return def;
@@ -83,7 +113,8 @@ function readFeed(filePath, title, link) {
     title,
     link,
     description: `ibhub feed for ${title}`,
-    items: []
+    items: [],
+    lastValue: ""
   };
 }
 
@@ -98,6 +129,8 @@ function withCORS(res) {
   return res;
 }
 
+/* ========================= */
+
 async function fetchData(channelsObj, id, skipsave = false) {
   if (!channelsObj || !channelsObj.url) {
     return { error: `Missing channel or url for ${id}` };
@@ -105,6 +138,38 @@ async function fetchData(channelsObj, id, skipsave = false) {
 
   try {
     const res = await fetch(channelsObj.url);
+    const contentType = res.headers.get("content-type") || "";
+
+    const feedFile = path.join(RSS_FOLDER, safeFileName(id) + ".json");
+    const feed = readFeed(feedFile, id, channelsObj.url);
+
+    /* ===== JSON MODE ===== */
+    if (contentType.includes("application/json")) {
+      const json = await res.json();
+console.log(json)
+      const check = apiChecker({
+        json,
+        path: channelsObj.jsonpath,
+        prev: feed.lastValue || ""
+      });
+
+      if (check.updated) {
+        feed.lastValue = check.value;
+        feed.items.push({
+          title: check.value,
+          description: "",
+          img: "",
+          pubDate: new Date().toUTCString()
+        });
+
+        if (!skipsave) writeFeed(feedFile, feed);
+      }
+
+      return { data: feed };
+    }
+    /* ===================== */
+
+    /* ===== HTML MODE ===== */
     const html = await res.text();
     const $ = cheerio.load(html);
 
@@ -115,10 +180,6 @@ async function fetchData(channelsObj, id, skipsave = false) {
 
     const newPosts = [];
 
-    const pushPost = p => {
-      newPosts.push(p);
-    };
-
     $(containerSel).each((_, el) => {
       const el$ = $(el);
 
@@ -126,56 +187,36 @@ async function fetchData(channelsObj, id, skipsave = false) {
         ? el$.find(titleSel).first().text().trim()
         : el$.clone().children().remove().end().text().trim();
 
-      const rawImg = imgSel
+      const rawImgRaw = imgSel
         ? el$.find(imgSel).first().attr("src")
         : el$.find("img").first().attr("src");
 
+      const rawImg = normalizeImgUrl(rawImgRaw, channelsObj.url);
+
       if (!title && !rawImg) return;
 
-      const img = normalizeImgUrl(rawImg, channelsObj.url);
-
-      const finalTitle =
-        title || (img ? `Image post – ${img}` : "");
-
-      pushPost({
-        title: finalTitle,
-        description: textSel
-          ? el$.find(textSel).first().text()
-          : "",
-        img,
+      newPosts.push({
+        title: title || `Image post`,
+        description: textSel ? el$.find(textSel).first().text() : "",
+        img: rawImg || "",
         pubDate: new Date().toUTCString()
       });
     });
 
-    if (!newPosts.length) {
-      return { error: `No posts found for ${id}` };
-    }
-
-    // === FIX: normalize order BEFORE comparison ===
     if (channelsObj.newontop === true) {
       newPosts.reverse();
     }
-    // ==============================================
-
-    const feedFile = path.join(RSS_FOLDER, safeFileName(id) + ".json");
-    const feed = readFeed(feedFile, id, channelsObj.url);
 
     const freshItems = newPosts.filter(p => {
-      const pTitle = normalizeText(p.title);
-      const pText = normalizeText(p.description);
-      const pImg = p.img || "";
-
-      return !feed.items.some(e => {
-        const eTitle = normalizeText(e.title);
-        const eText = normalizeText(e.description);
-        const eImg = e.img || "";
-
-        return pTitle === eTitle && pText === eText && pImg === eImg;
-      });
+      return !feed.items.some(e =>
+        normalizeText(e.title) === normalizeText(p.title) &&
+        normalizeText(e.description) === normalizeText(p.description) &&
+        normalizeImgUrl(e.img, channelsObj.url) ===
+        normalizeImgUrl(p.img, channelsObj.url)
+      );
     });
 
     feed.items.push(...freshItems);
-
     if (!skipsave) writeFeed(feedFile, feed);
 
     return { data: feed };
@@ -183,6 +224,8 @@ async function fetchData(channelsObj, id, skipsave = false) {
     return { error: err.toString() };
   }
 }
+
+/* ========================= */
 
 async function fetchFromId(req) {
   const id = req.params.id;
@@ -215,6 +258,8 @@ async function getmeta(pageurl) {
     return { error };
   }
 }
+
+/* ========================= */
 
 const port = 3013;
 console.log(`:D http://localhost:${port}`);
